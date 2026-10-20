@@ -1,0 +1,9 @@
+node_modules/
+build/
+.wrangler/
+dist/
+*.log
+.dev.vars
+.secrets/
+.DS_Store
+.freebuff/
