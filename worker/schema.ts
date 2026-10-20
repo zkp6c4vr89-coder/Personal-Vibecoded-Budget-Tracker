@@ -1,7 +1,7 @@
-/*
- * Schema + one-time seed data, applied lazily by the worker the first time an
- * API request hits a fresh database. Every statement is idempotent and the
- * whole set is recorded in schema_migrations so it runs exactly once.
+/* Schema + seed data, applied lazily by the worker the first time an API
+ * request hits a fresh database. Migrations are recorded in schema_migrations
+ * and run exactly once each, in order; every statement is idempotent so a
+ * partially-applied migration can safely retry.
  */
 
 const STATEMENTS: string[] = [
@@ -80,6 +80,56 @@ const STATEMENTS: string[] = [
   `INSERT OR IGNORE INTO settings (key, value) VALUES ('usd_myr_rate', '4.60')`,
 ];
 
+/** Income-only categories (migration 0002), inserted by name-safe upsert. */
+const INCOME_SEEDS: Array<[string, string]> = [
+  ['cat_allowance', 'Allowance'],
+  ['cat_family', 'Family'],
+  ['cat_salary', 'Salary'],
+  ['cat_gift', 'Gift'],
+  ['cat_income_other', 'Other'],
+];
+
+interface Migration {
+  id: string;
+  run: (db: D1Database) => Promise<void>;
+}
+
+const MIGRATIONS: Migration[] = [
+  {
+    id: '0001_initial',
+    run: async (db) => {
+      for (const sql of STATEMENTS) await db.prepare(sql).run();
+    },
+  },
+  {
+    // Categorise existing rows as expenses (their default) and seed the
+    // income-side categories. Existing databases only need the ALTER plus the
+    // five INSERTs; both are safe to retry.
+    id: '0002_category_kind',
+    run: async (db) => {
+      try {
+        await db
+          .prepare(`ALTER TABLE categories ADD COLUMN kind TEXT NOT NULL DEFAULT 'expense'`)
+          .run();
+      } catch (err) {
+        // A retry after a partial run: the column is already there.
+        if (!String(err).toLowerCase().includes('duplicate column')) throw err;
+      }
+      for (const [id, name] of INCOME_SEEDS) {
+        // By name, not just id, so a user-created "Salary" isn't duplicated.
+        await db
+          .prepare(
+            `INSERT INTO categories (id, name, sort_order, kind)
+             SELECT ?, ?, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM categories), 'income'
+             WHERE NOT EXISTS (SELECT 1 FROM categories WHERE name = ? AND kind = 'income')`,
+          )
+          .bind(id, name, name)
+          .run();
+      }
+    },
+  },
+];
+
 let ready: Promise<void> | null = null;
 
 export function ensureSchema(db: D1Database): Promise<void> {
@@ -92,14 +142,18 @@ export function ensureSchema(db: D1Database): Promise<void> {
            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
          )`)
         .run();
-      const seen = await db
-        .prepare(`SELECT id FROM schema_migrations WHERE id = '0001_initial'`)
-        .first();
-      if (seen) return;
-      for (const sql of STATEMENTS) {
-        await db.prepare(sql).run();
+      for (const migration of MIGRATIONS) {
+        const seen = await db
+          .prepare('SELECT id FROM schema_migrations WHERE id = ?')
+          .bind(migration.id)
+          .first();
+        if (seen) continue;
+        await migration.run(db);
+        await db
+          .prepare('INSERT OR IGNORE INTO schema_migrations (id) VALUES (?)')
+          .bind(migration.id)
+          .run();
       }
-      await db.prepare(`INSERT OR IGNORE INTO schema_migrations (id) VALUES ('0001_initial')`).run();
     })().catch((err) => {
       ready = null; // allow retry on the next request
       throw err;

@@ -16,6 +16,8 @@ export interface Category {
   name: string;
   sort_order: number;
   archived: number;
+  /** Which picker the category belongs to; legacy rows are 'expense'. */
+  kind?: 'expense' | 'income';
 }
 
 export interface Budget {
@@ -46,6 +48,8 @@ export interface Transaction {
 
 export interface Settings {
   usd_myr_rate: number;
+  /** YYYY-MM-DD of the last rate change, shown in Settings. */
+  usd_myr_rate_updated?: string;
 }
 
 export interface MoneyTotals {
@@ -116,6 +120,8 @@ export interface Report {
   prev_key: string;
   next_key: string | null;
   avg_daily_spent: number;
+  /** Spending-over-time buckets for the chart under the summary cards. */
+  series: SeriesPoint[];
 }
 
 export interface Bootstrap {
@@ -124,4 +130,15 @@ export interface Bootstrap {
   budgets: Budget[];
   settings: Settings;
   expires_at?: number;
+}
+
+/** One downloadable JSON document (GET /api/backup, POST /api/restore). */
+export interface Backup {
+  version: 1;
+  exported_at: string;
+  accounts: Account[];
+  categories: Category[];
+  budgets: Budget[];
+  settings: Record<string, string>;
+  transactions: Transaction[];
 }

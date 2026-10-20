@@ -14,6 +14,7 @@ import {
   isValidMonth,
   monthKey,
   monthLabel,
+  monthLabelShort,
   monthRange,
   mondayOf,
   dayMonth,
@@ -177,6 +178,52 @@ function pctChange(cur: number, prev: number): number | null {
   return Math.round(((cur - prev) / prev) * 1000) / 10;
 }
 
+/**
+ * Spending-over-time buckets for the report chart: 13 Mon-Sun weeks for a
+ * weekly report, 12 calendar months for a monthly one, ending at the period
+ * being viewed so the chart follows period browsing.
+ */
+async function spendingSeries(
+  env: Env,
+  rateStr: string,
+  kind: 'week' | 'month',
+  anchorEnd: string,
+): Promise<SeriesPoint[]> {
+  let bucketStarts: string[];
+  let rangeStart: string;
+  let bucketOf: (iso: string) => string;
+
+  if (kind === 'week') {
+    rangeStart = shiftWeeks(mondayOf(anchorEnd), -12);
+    bucketStarts = Array.from({ length: 13 }, (_, i) => shiftWeeks(rangeStart, i));
+    bucketOf = mondayOf;
+  } else {
+    const firstMonth = shiftMonth(monthKey(anchorEnd), -11);
+    rangeStart = monthRange(firstMonth).start;
+    bucketStarts = Array.from({ length: 12 }, (_, i) => shiftMonth(firstMonth, i));
+    bucketOf = (iso) => iso.slice(0, 7);
+  }
+
+  const rows = await env.DB.prepare(
+    `SELECT t.occurred_on, ${amt(rateStr)} AS amt
+     FROM transactions t JOIN accounts a ON a.id = t.account_id
+     WHERE t.type = 'expense' AND t.occurred_on >= ?1 AND t.occurred_on <= ?2`,
+  )
+    .bind(rangeStart, anchorEnd)
+    .all<{ occurred_on: string; amt: number }>();
+
+  const buckets = new Map<string, number>(bucketStarts.map((k) => [k, 0]));
+  for (const row of rows.results) {
+    const key = bucketOf(row.occurred_on);
+    if (buckets.has(key)) buckets.set(key, (buckets.get(key) ?? 0) + row.amt);
+  }
+  return [...buckets.entries()].map(([key, value]) => ({
+    key,
+    label: kind === 'week' ? dayMonth(key) : monthLabelShort(key),
+    spent_minor: Math.round(value),
+  }));
+}
+
 /* --------------------------------------------------------------- dashboard */
 
 export async function getDashboard(ctx: RouteCtx): Promise<Response> {
@@ -268,11 +315,12 @@ async function buildReport(env: Env, args: BuildArgs): Promise<Report> {
   const bRange = monthRange(args.budgetMonth);
   const { rateStr } = await getRate(env);
 
-  const [totals, byCat, top, budgetList] = await Promise.all([
+  const [totals, byCat, top, budgetList, series] = await Promise.all([
     totalsPair(env, rateStr, args.start, args.end, args.prevStart, args.prevEnd),
     byCategoryPair(env, rateStr, args.start, args.end, bRange.start, bRange.end),
     topExpenses(env, args.start, args.end, rateStr),
     listBudgetRows(env),
+    spendingSeries(env, rateStr, args.kind, args.end),
   ]);
   const prev = totals.b;
 
@@ -300,6 +348,7 @@ async function buildReport(env: Env, args: BuildArgs): Promise<Report> {
     prev_key: args.prevKey,
     next_key: args.nextKey,
     avg_daily_spent: Math.round(totals.a.spent_minor / days),
+    series,
   };
   return report;
 }

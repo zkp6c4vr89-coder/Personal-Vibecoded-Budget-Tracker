@@ -8,12 +8,14 @@ import {
   deleteBudget,
   deleteCategory,
   deleteTransaction,
+  exportBackup,
   getSettings,
   getTransaction,
   listAccounts,
   listBudgets,
   listCategories,
   listTransactions,
+  restoreBackup,
   updateAccount,
   updateCategory,
   updateTransaction,
@@ -66,6 +68,9 @@ const ROUTES: Route[] = [
 
   { method: 'GET', pattern: '/api/settings', handler: ({ env }) => getSettings(env) },
   { method: 'PUT', pattern: '/api/settings', handler: updateSettings },
+
+  { method: 'GET', pattern: '/api/backup', handler: exportBackup },
+  { method: 'POST', pattern: '/api/restore', handler: restoreBackup },
 
   { method: 'GET', pattern: '/api/dashboard', handler: getDashboard },
   { method: 'GET', pattern: '/api/report/week', handler: getWeekReport },

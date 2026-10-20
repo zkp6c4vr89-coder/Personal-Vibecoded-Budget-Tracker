@@ -138,9 +138,37 @@ async function main() {
     'USD',
   );
   eq(
-    'seven seeded categories',
+    'seeded categories (7 expense + 5 income)',
     boot.categories.map((c) => c.name),
-    ['Food', 'Transport', 'Bills', 'Shopping', 'Entertainment', 'Education', 'Other'],
+    [
+      'Food',
+      'Transport',
+      'Bills',
+      'Shopping',
+      'Entertainment',
+      'Education',
+      'Other',
+      'Allowance',
+      'Family',
+      'Salary',
+      'Gift',
+      'Other',
+    ],
+  );
+  eq(
+    'income categories carry kind=income',
+    boot.categories.filter((c) => c.kind === 'income').map((c) => c.name).sort(),
+    ['Allowance', 'Family', 'Gift', 'Other', 'Salary'].sort(),
+  );
+  eq(
+    'seeded expense categories carry kind=expense',
+    boot.categories.filter((c) => c.kind === 'expense').length,
+    7,
+  );
+  eq(
+    'the two Other categories stay distinct',
+    boot.categories.filter((c) => c.name === 'Other').length,
+    2,
   );
   check('usd rate setting present', boot.settings.usd_myr_rate > 0, boot.settings);
 
@@ -328,6 +356,11 @@ async function main() {
   r = await req('/api/settings', { method: 'PUT', cookie, body: { usd_myr_rate: 5.25 } });
   eq('update rate', r.res.status, 200);
   eq('rate saved', r.data.settings.usd_myr_rate, 5.25);
+  check(
+    'rate change records a last-updated date',
+    /^\d{4}-\d{2}-\d{2}$/.test(r.data.settings.usd_myr_rate_updated || ''),
+    r.data.settings,
+  );
   r = await req('/api/settings', { method: 'PUT', cookie, body: { usd_myr_rate: -3 } });
   eq('invalid rate rejected', r.res.status, 400);
   r = await req('/api/settings', { method: 'PUT', cookie, body: { usd_myr_rate: rate } });
@@ -390,6 +423,12 @@ async function main() {
   console.log('\nweekly report');
   r = await req(`/api/report/week?start=${today}`, { cookie });
   eq('week report 200', r.res.status, 200);
+  eq('weekly report carries 13 chart buckets', r.data.series.length, 13);
+  check(
+    'weekly series ends on the viewed week',
+    typeof r.data.series[12]?.key === 'string' && r.data.series[12].key.length === 10,
+    r.data.series[12],
+  );
   const wk = r.data;
   eq('week starts monday', wk.start, mondayOf(today));
   eq('week ends sunday', wk.end, addDays(mondayOf(today), 6));
@@ -417,6 +456,7 @@ async function main() {
   const prevMonth = prevMonthDate.toISOString().slice(0, 7);
   r = await req(`/api/report/month?month=${month}`, { cookie });
   eq('month report 200', r.res.status, 200);
+  eq('monthly report carries 12 chart buckets', r.data.series.length, 12);
   const mn = r.data;
   eq('month label', mn.label.split(' ')[1], today.slice(0, 4));
   eq('month income', mn.totals.income_minor, 300000);
@@ -464,6 +504,75 @@ async function main() {
   eq('delete budget', r.res.status, 204);
   r = await req('/api/budgets', { cookie });
   eq('budget list empty after delete', r.data.budgets.length, 0);
+
+  /* --------------------------------------------------- backup + restore */
+  console.log('\nbackup + restore');
+  r = await req('/api/backup', { cookie });
+  eq('backup is 200', r.res.status, 200);
+  eq('backup version', r.data.version, 1);
+  check('backup has accounts', Array.isArray(r.data.accounts) && r.data.accounts.length >= 4);
+  check('backup has categories', Array.isArray(r.data.categories) && r.data.categories.length >= 12);
+  check(
+    'backup has transactions',
+    Array.isArray(r.data.transactions) && r.data.transactions.length > 0,
+    r.data.transactions?.length,
+  );
+  check('backup has settings', r.data.settings && typeof r.data.settings.usd_myr_rate === 'string');
+
+  const restorePayload = {
+    version: 1,
+    accounts: [
+      { id: 'acc_restored', name: 'Restored wallet', currency: 'MYR', opening_balance_minor: 12345, sort_order: 9, archived: 0 },
+      { id: '', name: 'invalid-no-id', currency: 'MYR' },
+    ],
+    categories: [{ id: 'cat_restored', name: 'Restored cat', sort_order: 99, archived: 0, kind: 'expense' }],
+    budgets: [{ id: 'bud_restored', category_id: 'cat_restored', monthly_amount_minor: 25000 }],
+    transactions: [
+      {
+        id: 'tx_restored',
+        type: 'expense',
+        amount_minor: 4200,
+        account_id: 'acc_restored',
+        category_id: 'cat_restored',
+        note: 'From backup',
+        occurred_on: '2026-01-15',
+      },
+      // Orphan: account does not exist anywhere → must be skipped.
+      { id: 'tx_orphan', type: 'expense', amount_minor: 100, account_id: 'ghost', occurred_on: '2026-01-15' },
+    ],
+    settings: { usd_myr_rate: '9.99' },
+  };
+
+  r = await req('/api/restore', { method: 'POST', cookie, body: restorePayload });
+  eq('restore is 200', r.res.status, 200);
+  eq('restore inserts the account', r.data.restored.accounts, 1);
+  eq('restore skips invalid rows', r.data.restored.skipped, 2);
+  eq('restore inserts the transaction', r.data.restored.transactions, 1);
+  eq('restore inserts the budget', r.data.restored.budgets, 1);
+
+  r = await req('/api/accounts', { cookie });
+  eq(
+    'restored account is listed',
+    r.data.accounts.some((a) => a.id === 'acc_restored'),
+    true,
+  );
+  r = await req('/api/transactions?account=acc_restored', { cookie });
+  eq('restored transaction is queryable', r.data.transactions.length, 1);
+
+  r = await req('/api/restore', { method: 'POST', cookie, body: restorePayload });
+  eq('second restore is 200 (idempotent)', r.res.status, 200);
+  eq('second restore inserts nothing new', r.data.restored.transactions, 0);
+  check('second restore reports duplicates as skipped', r.data.restored.skipped >= 3, r.data.restored);
+
+  r = await req('/api/settings', { cookie });
+  check(
+    'restore never overwrites an existing setting',
+    r.data.settings.usd_myr_rate !== 9.99,
+    r.data.settings,
+  );
+
+  r = await req('/api/restore', { method: 'POST', cookie, body: { version: 2 } });
+  eq('non-backup payload is rejected', r.res.status, 400);
 
   /* -------------------------------------------------------------- logout */
   console.log('\nlogout + rate limit');
