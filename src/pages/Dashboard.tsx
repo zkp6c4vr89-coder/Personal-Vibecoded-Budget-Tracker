@@ -1,9 +1,12 @@
 import { useNavigate } from 'react-router-dom';
-import { Bars, CHART_COLORS, Donut } from '../components/charts';
-import { Card, Chip, ErrorBanner, PageHeader, ProgressBar, SectionTitle, Spinner } from '../components/ui';
+import { Bars, Donut } from '../components/charts';
+import { Icon, categoryColor, categoryIcon, txColor, txIconName } from '../components/icons';
+import { Card, Chip, ErrorBanner, PageHeader, ProgressBar, SectionTitle, SkeletonList } from '../components/ui';
 import { api } from '../lib/api';
+import { txSpeech } from '../lib/a11y';
 import { money } from '../lib/money';
-import { dayHeading, todayISO, weekRange } from '../lib/period';
+import { CHART_COLORS } from '../lib/palette';
+import { dayHeadingShort, todayISO, weekRange } from '../lib/period';
 import type { Dashboard as DashboardData } from '../lib/types';
 import { useAsync } from '../lib/hooks';
 import { useApp } from '../state/AppContext';
@@ -21,9 +24,13 @@ export default function Dashboard() {
 
   if (loading && !data) {
     return (
-      <div className="flex justify-center py-24">
-        <Spinner className="h-6 w-6 text-emerald-600" />
-      </div>
+      <>
+        <PageHeader title="Budget Tracker" />
+        <div className="space-y-4">
+          <div className="skel h-52 w-full rounded-2xl" />
+          <SkeletonList rows={3} />
+        </div>
+      </>
     );
   }
 
@@ -32,6 +39,11 @@ export default function Dashboard() {
 
   const recent = data.recent.slice(0, 6);
 
+  function refresh() {
+    refetch();
+    reload().catch(() => {});
+  }
+
   return (
     <>
       <PageHeader
@@ -39,92 +51,75 @@ export default function Dashboard() {
         right={
           <button
             type="button"
-            onClick={() => {
-              refetch();
-              reload().catch(() => {});
-            }}
-            aria-label="Refresh"
-            className="flex h-11 w-11 items-center justify-center rounded-full text-slate-500 active:bg-slate-200 dark:active:bg-slate-800"
+            onClick={refresh}
+            className="flex h-11 items-center gap-1.5 rounded-full px-3 text-sm font-semibold text-slate-700 active:bg-slate-200 dark:text-slate-200 dark:active:bg-slate-800"
           >
-            ⟳
+            <Icon name="refresh" size={18} />
+            Refresh
           </button>
         }
       />
 
       {error && <ErrorBanner message={error} onDismiss={refetch} />}
 
-      {/* Combined total */}
-      <Card className="bg-gradient-to-br from-emerald-600 to-emerald-700 !border-emerald-600 text-white dark:from-emerald-700 dark:to-emerald-800">
+      {/* Hero: combined total + per-account breakdown */}
+      <Card className="overflow-hidden bg-gradient-to-br from-emerald-600 to-emerald-700 !border-emerald-600 text-white dark:from-emerald-700 dark:to-emerald-800">
         <p className="text-xs font-medium uppercase tracking-wide text-emerald-100/90">
           Total balance
         </p>
         <p className="mt-1 text-4xl font-bold tabular-nums">{money(data.total_myr_minor)}</p>
-        <div className="mt-3 flex items-center justify-between text-sm">
+        <div className="mt-2 flex items-center justify-between gap-2 text-sm">
           <span className="text-emerald-100/90">{accounts.length} accounts</span>
-          <button type="button" onClick={() => navigate('/settings')} className="rounded-full bg-white/15 px-3 py-1 text-xs font-semibold active:bg-white/25">
+          <button
+            type="button"
+            onClick={() => navigate('/settings')}
+            className="rounded-full bg-white/15 px-3 py-1.5 text-xs font-semibold active:bg-white/25"
+          >
             1 USD = RM {settings.usd_myr_rate} · edit
           </button>
         </div>
+        <div className="-mx-1 mt-3 flex gap-2 overflow-x-auto px-1 pb-0.5">
+          {data.accounts.map((a, i) => (
+            <button
+              key={a.id}
+              type="button"
+              onClick={() => navigate('/settings')}
+              className="w-40 shrink-0 rounded-xl bg-white/15 p-3 text-left active:bg-white/25"
+              aria-label={`${a.name}: ${money(a.balance_minor ?? 0, a.currency)}. Open settings.`}
+            >
+              <span className="flex items-center gap-1.5">
+                <span
+                  className="h-2.5 w-2.5 shrink-0 rounded-full"
+                  style={{ backgroundColor: CHART_COLORS[i % CHART_COLORS.length] }}
+                />
+                <span className="truncate text-xs font-medium text-emerald-100/90">{a.name}</span>
+              </span>
+              <span className="mt-1 block text-base font-semibold tabular-nums">
+                {money(a.balance_minor ?? 0, a.currency)}
+              </span>
+            </button>
+          ))}
+        </div>
       </Card>
 
-      {/* Accounts */}
-      <SectionTitle>Accounts</SectionTitle>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {data.accounts.map((a, i) => (
-          <Card key={a.id} className="p-3.5" onClick={() => navigate('/settings')}>
-            <div className="flex items-center gap-2">
-              <span
-                className="h-2.5 w-2.5 rounded-full"
-                style={{ backgroundColor: CHART_COLORS[i % CHART_COLORS.length] }}
-              />
-              <p className="truncate text-xs font-medium text-slate-500 dark:text-slate-400">{a.name}</p>
-            </div>
-            <p className="mt-1.5 text-lg font-semibold tabular-nums">
-              {money(a.balance_minor ?? 0, a.currency)}
-            </p>
-          </Card>
-        ))}
-      </div>
-
-      {/* Week / month */}
-      <SectionTitle>This week &amp; this month</SectionTitle>
+      {/* Monthly summary (week alongside, for context) */}
+      <SectionTitle>Monthly summary</SectionTitle>
       <div className="grid gap-3 sm:grid-cols-2">
+        <PeriodCard
+          title={data.month.label}
+          spent={data.month.spent_minor}
+          income={data.month.income_minor}
+          net={data.month.net_minor}
+          primary
+        />
         <PeriodCard
           title={`Week · ${week.start.slice(8)}–${week.end.slice(8)}`}
           spent={data.week.spent_minor}
           income={data.week.income_minor}
           net={data.week.net_minor}
         />
-        <PeriodCard
-          title={data.month.label}
-          spent={data.month.spent_minor}
-          income={data.month.income_minor}
-          net={data.month.net_minor}
-        />
       </div>
       <p className="mt-1.5 text-xs text-slate-500">Transfers between accounts are not counted.</p>
-
-      {/* Category donut */}
-      <SectionTitle right={<span className="text-xs font-normal text-slate-500">{data.month.label}</span>}>
-        Spending by category
-      </SectionTitle>
-      <Card>
-        <Donut data={data.by_category.map((c) => ({ name: c.name, value: c.spent_minor }))} />
-      </Card>
-
-      {/* Over time */}
-      <SectionTitle>Spending over time</SectionTitle>
-      <Card>
-        <Bars
-          data={data.series.map((s, i) => ({
-            label: s.label,
-            value: s.spent_minor,
-            key: s.key,
-            highlight: i === data.series.length - 1,
-          }))}
-        />
-        <p className="mt-2 text-center text-xs text-slate-500">Last 13 weeks (Mon–Sun)</p>
-      </Card>
 
       {/* Budgets */}
       <SectionTitle
@@ -152,9 +147,16 @@ export default function Dashboard() {
             const pct = (b.spent_minor / b.budget_minor) * 100;
             return (
               <Card key={b.category_id} className="p-3.5" onClick={() => navigate('/budgets')}>
-                <div className="mb-2 flex items-baseline justify-between text-sm">
-                  <span className="font-medium">{b.name}</span>
-                  <span className="tabular-nums text-slate-500">
+                <div className="mb-2 flex items-center justify-between gap-2 text-sm">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <Icon
+                      name={categoryIcon(b.name)}
+                      size={16}
+                      style={{ color: categoryColor(b.name) }}
+                    />
+                    <span className="truncate font-medium">{b.name}</span>
+                  </span>
+                  <span className="shrink-0 tabular-nums text-slate-500">
                     {money(b.spent_minor)} / {money(b.budget_minor)}
                   </span>
                 </div>
@@ -163,14 +165,14 @@ export default function Dashboard() {
                   className={`mt-1.5 text-xs font-medium ${
                     pct >= 100
                       ? 'text-rose-600 dark:text-rose-400'
-                      : pct >= 80
+                      : pct >= 70
                         ? 'text-amber-600 dark:text-amber-400'
                         : 'text-slate-500'
                   }`}
                 >
                   {pct >= 100
                     ? 'Over budget!'
-                    : pct >= 80
+                    : pct >= 70
                       ? 'Approaching limit'
                       : `${pct.toFixed(0)}% used`}
                 </p>
@@ -179,6 +181,39 @@ export default function Dashboard() {
           })}
         </div>
       )}
+
+      {/* Category donut — tappable through to the filtered list */}
+      <SectionTitle right={<span className="text-xs font-normal text-slate-500">{data.month.label}</span>}>
+        Spending by category
+      </SectionTitle>
+      <Card>
+        <Donut
+          data={data.by_category.map((c) => ({
+            name: c.name,
+            value: c.spent_minor,
+            id: c.category_id,
+          }))}
+          onSelect={(s) =>
+            navigate(s.id ? `/transactions?category=${encodeURIComponent(s.id)}` : '/transactions')
+          }
+          renderIcon={(s) => <Icon name={categoryIcon(s.name)} size={16} />}
+        />
+        <p className="mt-2 text-center text-xs text-slate-500">Tap a slice to see those transactions.</p>
+      </Card>
+
+      {/* Over time */}
+      <SectionTitle>Spending over time</SectionTitle>
+      <Card>
+        <Bars
+          data={data.series.map((s, i) => ({
+            label: s.label,
+            value: s.spent_minor,
+            key: s.key,
+            highlight: i === data.series.length - 1,
+          }))}
+        />
+        <p className="mt-2 text-center text-xs text-slate-500">Last 13 weeks (Mon–Sun)</p>
+      </Card>
 
       {/* Recent */}
       <SectionTitle
@@ -195,38 +230,48 @@ export default function Dashboard() {
         Recent transactions
       </SectionTitle>
       <div className="space-y-2">
-        {recent.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => navigate(`/add?id=${t.id}`)}
-            className="flex w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 text-left active:opacity-90 dark:border-slate-800 dark:bg-slate-900/60"
-          >
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-medium">
-                {t.note || t.category_name || (t.type === 'transfer' ? 'Transfer' : t.type)}
-              </span>
-              <span className="block truncate text-xs text-slate-500">
-                {dayHeading(t.occurred_on, today)} ·{' '}
-                {t.type === 'transfer'
-                  ? `${t.account_name} → ${t.to_account_name}`
-                  : t.account_name}
-              </span>
-            </span>
-            <span
-              className={`text-sm font-semibold tabular-nums ${
-                t.type === 'income'
-                  ? 'text-emerald-600 dark:text-emerald-400'
-                  : t.type === 'expense'
-                    ? 'text-rose-600 dark:text-rose-400'
-                    : 'text-sky-600 dark:text-sky-400'
-              }`}
+        {recent.map((t) => {
+          const color = txColor(t);
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => navigate(`/add?id=${t.id}`)}
+              aria-label={`${txSpeech(t)}, ${dayHeadingShort(t.occurred_on, today)}`}
+              className="flex w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 text-left active:opacity-90 dark:border-slate-800 dark:bg-slate-900/60"
             >
-              {t.type === 'income' ? '+' : t.type === 'expense' ? '-' : ''}
-              {money(t.amount_minor, t.account_currency ?? 'MYR')}
-            </span>
-          </button>
-        ))}
+              <span
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
+                style={{ backgroundColor: `${color}22`, color }}
+              >
+                <Icon name={txIconName(t)} size={18} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium">
+                  {t.note || t.category_name || (t.type === 'transfer' ? 'Transfer' : t.type)}
+                </span>
+                <span className="block truncate text-xs text-slate-500">
+                  {dayHeadingShort(t.occurred_on, today)} ·{' '}
+                  {t.type === 'transfer'
+                    ? `${t.account_name} → ${t.to_account_name}`
+                    : t.account_name}
+                </span>
+              </span>
+              <span
+                className={`text-sm font-semibold tabular-nums ${
+                  t.type === 'income'
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : t.type === 'expense'
+                      ? 'text-rose-600 dark:text-rose-400'
+                      : 'text-sky-600 dark:text-sky-400'
+                }`}
+              >
+                {t.type === 'income' ? '+' : t.type === 'expense' ? '-' : ''}
+                {money(t.amount_minor, t.account_currency ?? 'MYR')}
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       <div className="h-4" />
@@ -242,14 +287,16 @@ function PeriodCard({
   spent,
   income,
   net,
+  primary,
 }: {
   title: string;
   spent: number;
   income: number;
   net: number;
+  primary?: boolean;
 }) {
   return (
-    <Card className="p-4">
+    <Card className={`p-4 ${primary ? 'border-emerald-300 dark:border-emerald-800' : ''}`}>
       <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</p>
       <div className="space-y-1.5 text-sm">
         <Row label="Spent" value={money(spent)} tone="text-rose-600 dark:text-rose-400" />

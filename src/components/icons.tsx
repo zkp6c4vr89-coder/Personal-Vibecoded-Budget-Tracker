@@ -1,5 +1,5 @@
 import type { ReactNode, SVGProps } from 'react';
-import { CHART_COLORS } from './charts';
+import { CHART_COLORS } from '../lib/palette';
 
 /*
  * One outline icon set (Lucide-style, 24px grid, 1.75 stroke) so every tab,
@@ -274,6 +274,22 @@ export function categoryColor(name: string | null | undefined): string {
 /** Icon for a category name; unknown names get the generic tag. */
 export function categoryIcon(name: string | null | undefined): IconName {
   return CATEGORY_ICONS[(name ?? '').toLowerCase()] ?? 'tag';
+}
+
+/**
+ * Row icon: transfers always read as arrows regardless of category, everything
+ * else follows its category.
+ */
+export function txIconName(tx: {
+  type: string;
+  category_name?: string | null;
+}): IconName {
+  return tx.type === 'transfer' ? 'transfer' : categoryIcon(tx.category_name);
+}
+
+/** Row colour: sky for transfers, category colour otherwise. */
+export function txColor(tx: { type: string; category_name?: string | null }): string {
+  return tx.type === 'transfer' ? '#38bdf8' : categoryColor(tx.category_name);
 }
 
 export function Icon({

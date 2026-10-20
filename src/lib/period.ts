@@ -136,6 +136,13 @@ export function dayHeading(iso: string, today: string): string {
   return shortDate(iso);
 }
 
+/** Compact day label for dense rows: "Today", "Yesterday" or "18 Oct". */
+export function dayHeadingShort(iso: string, today: string): string {
+  if (iso === today) return 'Today';
+  if (iso === addDays(today, -1)) return 'Yesterday';
+  return dayMonth(iso);
+}
+
 export function isValidISO(s: unknown): s is string {
   return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(fromISO(s).getTime());
 }

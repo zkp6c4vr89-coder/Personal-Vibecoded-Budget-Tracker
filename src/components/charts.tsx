@@ -1,25 +1,38 @@
 import { money } from '../lib/money';
+import { CHART_COLORS } from '../lib/palette';
 
-export const CHART_COLORS = [
-  '#10b981',
-  '#38bdf8',
-  '#f59e0b',
-  '#a78bfa',
-  '#f43f5e',
-  '#14b8a6',
-  '#84cc16',
-  '#fb923c',
-  '#60a5fa',
-  '#e879f9',
-];
+export { CHART_COLORS } from '../lib/palette';
 
-interface Slice {
+export interface Slice {
   name: string;
   value: number;
+  /** Category id, so a tap can deep-link into a filtered list. */
+  id?: string | null;
 }
 
-/** Donut chart of spending by category. Pure SVG, no chart library. */
-export function Donut({ data, size = 168 }: { data: Slice[]; size?: number }) {
+interface Segment extends Slice {
+  color: string;
+  dash: string;
+  offset: number;
+  pct: number;
+}
+
+/**
+ * Donut chart of spending by category. Pure SVG, no chart library.
+ * Segments and legend rows are tappable when `onSelect` is given, so a
+ * category can be opened in the transaction list.
+ */
+export function Donut({
+  data,
+  size = 168,
+  onSelect,
+  renderIcon,
+}: {
+  data: Slice[];
+  size?: number;
+  onSelect?: (slice: Slice) => void;
+  renderIcon?: (slice: Slice) => React.ReactNode;
+}) {
   const total = data.reduce((sum, d) => sum + d.value, 0);
   const stroke = size * 0.12;
   const r = size / 2 - stroke / 2;
@@ -38,11 +51,10 @@ export function Donut({ data, size = 168 }: { data: Slice[]; size?: number }) {
   }
 
   let offset = 0;
-  const segments = data.map((d, i) => {
+  const segments: Segment[] = data.map((d, i) => {
     const len = (d.value / total) * c;
-    const seg = {
-      name: d.name,
-      value: d.value,
+    const seg: Segment = {
+      ...d,
       color: CHART_COLORS[i % CHART_COLORS.length],
       dash: `${Math.max(len - 1.5, 0)} ${c - Math.max(len - 1.5, 0)}`,
       offset: -offset,
@@ -58,9 +70,9 @@ export function Donut({ data, size = 168 }: { data: Slice[]; size?: number }) {
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label="Spending by category">
           <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
             <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="stroke-slate-200 dark:stroke-slate-800" />
-            {segments.map((s) => (
+            {segments.map((s, i) => (
               <circle
-                key={s.name}
+                key={`${s.id ?? s.name}-${i}`}
                 cx={size / 2}
                 cy={size / 2}
                 r={r}
@@ -69,6 +81,32 @@ export function Donut({ data, size = 168 }: { data: Slice[]; size?: number }) {
                 strokeWidth={stroke}
                 strokeDasharray={s.dash}
                 strokeDashoffset={s.offset}
+                className={onSelect ? 'cursor-pointer transition-opacity hover:opacity-80' : undefined}
+                onClick={
+                  onSelect
+                    ? (e) => {
+                        e.stopPropagation();
+                        onSelect(s);
+                      }
+                    : undefined
+                }
+                role={onSelect ? 'button' : undefined}
+                tabIndex={onSelect ? 0 : undefined}
+                aria-label={
+                  onSelect
+                    ? `${s.name}: ${money(s.value)}, ${s.pct.toFixed(0)} percent. Open in list.`
+                    : undefined
+                }
+                onKeyDown={
+                  onSelect
+                    ? (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          onSelect(s);
+                        }
+                      }
+                    : undefined
+                }
               />
             ))}
           </g>
@@ -93,15 +131,39 @@ export function Donut({ data, size = 168 }: { data: Slice[]; size?: number }) {
         </svg>
       </div>
 
-      <ul className="w-full min-w-0 space-y-1.5">
-        {segments.map((s) => (
-          <li key={s.name} className="flex items-center gap-2 text-sm">
-            <span className="h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: s.color }} />
-            <span className="min-w-0 flex-1 truncate">{s.name}</span>
-            <span className="tabular-nums text-slate-500">{s.pct.toFixed(0)}%</span>
-            <span className="w-24 text-right font-medium tabular-nums">{money(s.value)}</span>
-          </li>
-        ))}
+      <ul className="w-full min-w-0 space-y-1">
+        {segments.map((s, i) => {
+          const rowClass = `grid w-full grid-cols-[auto_1fr_3rem_5.5rem] items-center gap-2 rounded-lg px-1.5 py-2 text-sm text-left ${
+            onSelect ? 'active:bg-slate-100 dark:active:bg-slate-800' : ''
+          }`;
+          const content = (
+            <>
+              <span className="flex items-center gap-2">
+                <span
+                  className="h-3 w-3 shrink-0 rounded-sm"
+                  style={{ backgroundColor: s.color }}
+                />
+                {renderIcon?.(s)}
+              </span>
+              <span className="min-w-0 truncate">{s.name}</span>
+              <span className="text-right tabular-nums text-slate-600 dark:text-slate-300">
+                {s.pct.toFixed(0)}%
+              </span>
+              <span className="text-right font-semibold tabular-nums">{money(s.value)}</span>
+            </>
+          );
+          return (
+            <li key={`${s.id ?? s.name}-${i}`}>
+              {onSelect ? (
+                <button type="button" onClick={() => onSelect(s)} className={rowClass}>
+                  {content}
+                </button>
+              ) : (
+                <div className={rowClass}>{content}</div>
+              )}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );
