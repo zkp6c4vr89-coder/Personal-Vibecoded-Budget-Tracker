@@ -10,13 +10,15 @@ export function PageHeader({
   right?: ReactNode;
 }) {
   return (
-    <header className="sticky top-0 z-20 -mx-4 mb-3 flex items-center gap-2 border-b border-slate-200/70 bg-slate-100/90 px-4 py-3 backdrop-blur dark:border-slate-800/70 dark:bg-[#0b1220]/90">
+    // Opaque + fixed height: the old translucent, blur-backed header ghosted
+    // content underneath while scrolling.
+    <header className="sticky top-0 z-20 -mx-4 mb-3 flex h-16 items-center gap-2 border-b border-slate-200 bg-slate-100 px-4 dark:border-slate-800 dark:bg-[#0b1220]">
       {back && (
         <button
           type="button"
           onClick={back}
           aria-label="Back"
-          className="-ml-1 flex h-11 w-11 items-center justify-center rounded-full text-lg text-slate-600 active:bg-slate-200 dark:text-slate-300 dark:active:bg-slate-800"
+          className="-ml-2 flex h-11 w-11 items-center justify-center rounded-full text-slate-700 active:bg-slate-200 dark:text-slate-200 dark:active:bg-slate-800"
         >
           ‹
         </button>
@@ -109,6 +111,25 @@ export function Spinner({ className = '' }: { className?: string }) {
   );
 }
 
+/** Shimmering placeholder used while a screen's first payload loads. */
+export function Skeleton({ className = '' }: { className?: string }) {
+  return <span className={`skel block ${className}`} aria-hidden />;
+}
+
+/** Skeleton stand-in for a list of cards while data loads. */
+export function SkeletonList({ rows = 4 }: { rows?: number }) {
+  return (
+    <div className="space-y-3" aria-busy="true" aria-label="Loading">
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/60">
+          <Skeleton className="h-3.5 w-1/3" />
+          <Skeleton className="mt-3 h-5 w-1/2" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function ErrorBanner({ message, onDismiss }: { message: string; onDismiss?: () => void }) {
   return (
     <div className="mb-3 flex items-start justify-between gap-3 rounded-xl border border-rose-300 bg-rose-50 px-3 py-2.5 text-sm text-rose-700 dark:border-rose-900 dark:bg-rose-950/60 dark:text-rose-300">
@@ -137,7 +158,7 @@ export function Field({
         {label}
       </span>
       {children}
-      {hint && <span className="mt-1 block text-xs text-slate-500">{hint}</span>}
+      {hint && <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">{hint}</span>}
     </label>
   );
 }
@@ -183,7 +204,7 @@ export function Modal({
         onClick={onClose}
         aria-hidden
       />
-      <div className="relative z-10 max-h-[90vh] w-full overflow-y-auto rounded-t-3xl border border-slate-200 bg-white p-5 pb-8 shadow-xl dark:border-slate-800 dark:bg-slate-900 sm:max-w-md sm:rounded-3xl">
+      <div className="sheet-in relative z-10 max-h-[90vh] w-full overflow-y-auto rounded-t-3xl border border-slate-200 bg-white p-5 pb-8 shadow-xl dark:border-slate-800 dark:bg-slate-900 sm:max-w-md sm:rounded-3xl">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-base font-semibold">{title}</h2>
           <button
@@ -221,10 +242,10 @@ export function Chip({
     <button
       type="button"
       onClick={onClick}
-      className={`min-h-10 shrink-0 rounded-full border px-3.5 py-1.5 text-sm font-medium transition active:scale-95 ${
+      className={`min-h-11 shrink-0 rounded-full border px-4 py-2 text-sm font-medium transition active:scale-95 ${
         active
           ? activeStyles
-          : 'border-slate-300 bg-white text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300'
+          : 'border-slate-300 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200'
       }`}
     >
       {children}
@@ -235,13 +256,21 @@ export function Chip({
 export function ProgressBar({ pct, warn }: { pct: number; warn?: boolean }) {
   const clamped = Math.max(0, Math.min(100, pct));
   const over = pct >= 100;
-  const near = !over && pct >= 80;
+  const near = !over && pct >= 70;
   const color = over ? 'bg-rose-500' : near || warn ? 'bg-amber-500' : 'bg-emerald-500';
+  // Anything spent at all stays visible, however small the percentage.
+  const width = pct > 0 && clamped < 2 ? 2 : clamped;
   return (
-    <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
+    <div
+      className="h-2 w-full overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800"
+      role="progressbar"
+      aria-valuenow={Math.round(clamped)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+    >
       <div
-        className={`h-full rounded-full transition-all ${color}`}
-        style={{ width: `${clamped}%` }}
+        className={`h-full rounded-full transition-[width] duration-200 ease-out ${color}`}
+        style={{ width: `${width}%` }}
       />
     </div>
   );

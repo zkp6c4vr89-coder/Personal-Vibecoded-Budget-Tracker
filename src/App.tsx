@@ -1,5 +1,6 @@
 import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import BottomNav from './components/BottomNav';
+import { ToastProvider } from './components/Toast';
 import { Spinner } from './components/ui';
 import Budgets from './pages/Budgets';
 import Dashboard from './pages/Dashboard';
@@ -24,9 +25,9 @@ function Shell() {
 
   if (!authed) return <Login />;
 
-  const pad = pathname.startsWith('/add') ? 'pb-6' : 'pb-24';
+  const pad = pathname.startsWith('/add') ? 'pb-6' : 'pb-nav';
   return (
-    <div className="mx-auto min-h-dvh w-full max-w-2xl px-4 pt-4 sm:pb-16">
+    <div className="mx-auto min-h-dvh w-full max-w-2xl px-4 pt-4">
       <div className={pad}>
         <Outlet />
       </div>
@@ -37,20 +38,22 @@ function Shell() {
 
 export default function App() {
   return (
-    <AppProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route element={<Shell />}>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/transactions" element={<Transactions />} />
-            <Route path="/add" element={<AddTransaction />} />
-            <Route path="/reports" element={<Reports />} />
-            <Route path="/budgets" element={<Budgets />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </AppProvider>
+    <ToastProvider>
+      <AppProvider>
+        <BrowserRouter>
+          <Routes>
+            <Route element={<Shell />}>
+              <Route path="/" element={<Dashboard />} />
+              <Route path="/transactions" element={<Transactions />} />
+              <Route path="/add" element={<AddTransaction />} />
+              <Route path="/reports" element={<Reports />} />
+              <Route path="/budgets" element={<Budgets />} />
+              <Route path="/settings" element={<Settings />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Route>
+          </Routes>
+        </BrowserRouter>
+      </AppProvider>
+    </ToastProvider>
   );
 }
