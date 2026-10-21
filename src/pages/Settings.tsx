@@ -332,7 +332,7 @@ export default function Settings() {
       </div>
       <p className="mt-1.5 text-xs text-slate-500">
         {accounts.length} active account{accounts.length === 1 ? '' : 's'} · tap to rename or edit the
-        starting balance · arrows reorder.
+        starting balance · tap an account to reorder it.
       </p>
 
       {/* Categories */}
