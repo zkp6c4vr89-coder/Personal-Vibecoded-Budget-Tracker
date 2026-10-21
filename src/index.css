@@ -23,12 +23,16 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-/* Native inputs inherit our look; keep iOS from zooming on small inputs. */
+/*
+ * Native inputs inherit our look. Sized in rem (1rem is >= 16px at default
+ * zoom, which stops iOS zooming on focus) rather than a hard 16px, so
+ * buttons, chips and fields still honour the user's Dynamic Type setting.
+ */
 input,
 select,
 textarea,
 button {
-  font-size: 16px;
+  font-size: 1rem;
 }
 
 input[type='date'] {
