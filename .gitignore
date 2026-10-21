@@ -7,3 +7,6 @@ dist/
 .secrets/
 .DS_Store
 .freebuff/
+
+# Local review artifacts
+/screenshots/
