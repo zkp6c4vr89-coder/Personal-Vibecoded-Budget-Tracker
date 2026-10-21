@@ -1,7 +1,10 @@
-import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Card, Chip, EmptyState, ErrorBanner, PageHeader, Spinner } from '../components/ui';
+import { useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Card, Chip, EmptyState, ErrorBanner, PageHeader, SkeletonList } from '../components/ui';
+import { Icon, txColor, txIconName } from '../components/icons';
+import { useToast } from '../components/Toast';
 import { api } from '../lib/api';
+import { txSpeechWithDate } from '../lib/a11y';
 import { money } from '../lib/money';
 import { dayHeading, todayISO } from '../lib/period';
 import type { Transaction } from '../lib/types';
@@ -13,14 +16,17 @@ const PAGE_SIZE = 50;
 export default function Transactions() {
   const { accounts, categories, reload } = useApp();
   const navigate = useNavigate();
+  const toast = useToast();
   const today = todayISO();
+  const [params] = useSearchParams();
 
-  const [q, setQ] = useState('');
-  const [account, setAccount] = useState('');
-  const [category, setCategory] = useState('');
-  const [type, setType] = useState('');
-  const [from, setFrom] = useState('');
-  const [to, setTo] = useState('');
+  // Deep links (e.g. tapping a donut slice on Home) preselect the filters.
+  const [q, setQ] = useState(params.get('q') ?? '');
+  const [account, setAccount] = useState(params.get('account') ?? '');
+  const [category, setCategory] = useState(params.get('category') ?? '');
+  const [type, setType] = useState(params.get('type') ?? '');
+  const [from, setFrom] = useState(params.get('from') ?? '');
+  const [to, setTo] = useState(params.get('to') ?? '');
   const [showFilters, setShowFilters] = useState(false);
   const [limit, setLimit] = useState(PAGE_SIZE);
 
@@ -54,15 +60,43 @@ export default function Transactions() {
     return [...map.entries()];
   }, [visible]);
 
-  const hasFilters = Boolean(q || account || category || type || from || to);
+  const activeFilters = [account, category, type, from, to].filter(Boolean).length;
 
-  async function removeTx(tx: Transaction) {
-    if (!window.confirm('Delete this transaction?')) return;
+  /**
+   * Swipe-left deletes, and the snackbar's Undo re-creates the same row from
+   * its stored fields — no confirmation dialog, no mis-tappable red ✕.
+   */
+  async function deleteTx(tx: Transaction) {
     try {
       await api.del(`/api/transactions/${tx.id}`);
       await Promise.all([reload(), refetch()]);
+      toast({
+        message: `Deleted ${tx.note || tx.category_name || tx.type}`,
+        tone: 'danger',
+        action: {
+          label: 'Undo',
+          onClick: async () => {
+            try {
+              await api.post('/api/transactions', {
+                type: tx.type,
+                amount_minor: tx.amount_minor,
+                to_amount_minor: tx.to_amount_minor,
+                account_id: tx.account_id,
+                to_account_id: tx.to_account_id,
+                category_id: tx.category_id,
+                note: tx.note,
+                occurred_on: tx.occurred_on,
+              });
+              await Promise.all([reload(), refetch()]);
+              toast({ message: 'Restored', tone: 'success' });
+            } catch (err: any) {
+              toast({ message: err?.message || 'Could not restore', tone: 'danger' });
+            }
+          },
+        },
+      });
     } catch (err: any) {
-      window.alert(err?.message || 'Could not delete');
+      toast({ message: err?.message || 'Could not delete', tone: 'danger' });
     }
   }
 
@@ -74,13 +108,20 @@ export default function Transactions() {
           <button
             type="button"
             onClick={() => setShowFilters((s) => !s)}
-            className={`min-h-10 rounded-xl px-3 text-sm font-semibold ${
-              showFilters || hasFilters
+            aria-expanded={showFilters}
+            className={`relative flex min-h-11 items-center gap-1.5 rounded-xl px-3 text-sm font-semibold transition ${
+              showFilters || activeFilters
                 ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300'
-                : 'text-slate-500 active:bg-slate-200 dark:active:bg-slate-800'
+                : 'text-slate-700 active:bg-slate-200 dark:text-slate-200 dark:active:bg-slate-800'
             }`}
           >
+            <Icon name="filter" size={18} />
             Filters
+            {activeFilters > 0 && (
+              <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-emerald-600 px-1 text-[11px] font-bold text-white">
+                {activeFilters}
+              </span>
+            )}
           </button>
         }
       />
@@ -125,6 +166,7 @@ export default function Transactions() {
               {categories.map((c) => (
                 <Chip key={c.id} active={category === c.id} onClick={() => setCategory(c.id)}>
                   {c.name}
+                  {c.kind === 'income' ? ' ↑' : ''}
                 </Chip>
               ))}
             </div>
@@ -171,9 +213,7 @@ export default function Transactions() {
             </div>
           </div>
           <div className="flex items-center justify-between pt-1">
-            <span className="text-sm text-slate-500">
-              {transactions.length} matching
-            </span>
+            <span className="text-sm text-slate-500">{transactions.length} matching</span>
             <button
               type="button"
               onClick={() => {
@@ -184,7 +224,7 @@ export default function Transactions() {
                 setFrom('');
                 setTo('');
               }}
-              className="min-h-10 rounded-xl px-3 text-sm font-semibold text-slate-500 active:bg-slate-200 dark:active:bg-slate-800"
+              className="min-h-11 rounded-xl px-3 text-sm font-semibold text-slate-700 active:bg-slate-200 dark:text-slate-200 dark:active:bg-slate-800"
             >
               Clear all
             </button>
@@ -195,13 +235,11 @@ export default function Transactions() {
       {error && <ErrorBanner message={error} onDismiss={refetch} />}
 
       {loading && !data ? (
-        <div className="flex justify-center py-16">
-          <Spinner className="h-6 w-6 text-emerald-600" />
-        </div>
+        <SkeletonList rows={5} />
       ) : transactions.length === 0 ? (
         <EmptyState
-          title={hasFilters ? 'No transactions match' : 'No transactions yet'}
-          body={hasFilters ? 'Try clearing the filters.' : 'Tap + to add your first one.'}
+          title={activeFilters || q ? 'No transactions match' : 'No transactions yet'}
+          body={activeFilters || q ? 'Try clearing the filters.' : 'Tap + to add your first one.'}
         />
       ) : (
         <div className="space-y-5">
@@ -209,14 +247,20 @@ export default function Transactions() {
             const spent = items
               .filter((t) => t.type === 'expense')
               .reduce((s, t) => s + t.amount_minor, 0);
+            const earned = items
+              .filter((t) => t.type === 'income')
+              .reduce((s, t) => s + t.amount_minor, 0);
+            const parts: string[] = [];
+            if (spent > 0) parts.push(`${money(spent)} spent`);
+            if (earned > 0) parts.push(`+${money(earned)} in`);
             return (
               <section key={day}>
                 <div className="mb-2 flex items-baseline justify-between">
                   <h2 className="text-sm font-semibold text-slate-500 dark:text-slate-400">
                     {dayHeading(day, today)}
                   </h2>
-                  {spent > 0 && (
-                    <span className="text-xs text-slate-500">{money(spent)} spent</span>
+                  {parts.length > 0 && (
+                    <span className="text-xs text-slate-500">{parts.join(' · ')}</span>
                   )}
                 </div>
                 <div className="space-y-2">
@@ -224,8 +268,9 @@ export default function Transactions() {
                     <Row
                       key={t.id}
                       tx={t}
+                      today={today}
                       onOpen={() => navigate(`/add?id=${t.id}`)}
-                      onDelete={() => removeTx(t)}
+                      onDelete={() => deleteTx(t)}
                     />
                   ))}
                 </div>
@@ -248,29 +293,102 @@ export default function Transactions() {
   );
 }
 
-function Row({ tx, onOpen, onDelete }: { tx: Transaction; onOpen: () => void; onDelete: () => void }) {
+const SWIPE_THRESHOLD = 72; // px of left travel that commits a delete
+
+function Row({
+  tx,
+  today,
+  onOpen,
+  onDelete,
+}: {
+  tx: Transaction;
+  today: string;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
   const currency = tx.account_currency ?? 'MYR';
   const isTransfer = tx.type === 'transfer';
-  const tone =
-    tx.type === 'income'
-      ? 'text-emerald-600 dark:text-emerald-400'
-      : tx.type === 'expense'
-        ? 'text-rose-600 dark:text-rose-400'
-        : 'text-sky-600 dark:text-sky-400';
+  const color = txColor(tx);
+  const speech = txSpeechWithDate(tx, today);
+  const [dx, setDx] = useState(0);
+  const start = useRef<{ x: number; y: number; active: boolean }>({ x: 0, y: 0, active: false });
+  // Mirror of dx for the pointerup decision: state may still be stale when
+  // events arrive within one frame.
+  const dxRef = useRef(0);
+
+  function onPointerDown(e: React.PointerEvent) {
+    start.current = { x: e.clientX, y: e.clientY, active: true };
+  }
+
+  function onPointerMove(e: React.PointerEvent) {
+    if (!start.current.active) return;
+    const moveX = e.clientX - start.current.x;
+    const moveY = e.clientY - start.current.y;
+    // Vertical movement means the user is scrolling — stand down.
+    if (Math.abs(moveY) > Math.abs(moveX)) {
+      start.current.active = false;
+      dxRef.current = 0;
+      setDx(0);
+      return;
+    }
+    const next = Math.max(-SWIPE_THRESHOLD - 24, Math.min(0, moveX));
+    dxRef.current = next;
+    setDx(next);
+  }
+
+  function onPointerUp() {
+    if (!start.current.active) {
+      dxRef.current = 0;
+      setDx(0);
+      return;
+    }
+    start.current.active = false;
+    if (dxRef.current <= -SWIPE_THRESHOLD) {
+      dxRef.current = -SWIPE_THRESHOLD;
+      setDx(-SWIPE_THRESHOLD);
+      onDelete();
+    } else {
+      dxRef.current = 0;
+      setDx(0);
+    }
+  }
 
   return (
-    <div className="group flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-800 dark:bg-slate-900/60">
-      <button type="button" onClick={onOpen} className="flex min-h-11 flex-1 items-center gap-3 text-left">
+    <div className="relative overflow-hidden rounded-2xl">
+      {/* Delete affordance — only mounted mid-swipe, so it can never show
+          through the (deliberately tinted) row surface at rest. */}
+      {dx !== 0 && (
+        <div className="absolute inset-y-0 right-0 flex w-24 items-center justify-center rounded-r-2xl bg-rose-600 text-white">
+          <Icon name="trash" size={20} />
+        </div>
+      )}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onOpen}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onOpen();
+          }
+        }}
+        aria-label={`${speech}. Swipe left to delete.`}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        className="relative flex min-h-14 cursor-pointer items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 shadow-sm transition-transform dark:border-slate-800 dark:bg-[#0d1526]"
+        style={{
+          transform: `translateX(${dx}px)`,
+          touchAction: 'pan-y',
+          transition: start.current.active ? 'none' : undefined,
+        }}
+      >
         <span
-          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold ${
-            isTransfer
-              ? 'bg-sky-50 text-sky-600 dark:bg-sky-950/60 dark:text-sky-300'
-              : tx.type === 'income'
-                ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-300'
-                : 'bg-rose-50 text-rose-600 dark:bg-rose-950/60 dark:text-rose-300'
-          }`}
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
+          style={{ backgroundColor: `${color}22`, color }}
         >
-          {isTransfer ? '⇄' : tx.type === 'income' ? '↓' : '↑'}
+          <Icon name={txIconName(tx)} size={18} />
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-sm font-medium">
@@ -282,20 +400,18 @@ function Row({ tx, onOpen, onDelete }: { tx: Transaction; onOpen: () => void; on
               : `${tx.account_name}${tx.category_name ? ` · ${tx.category_name}` : ''}`}
           </span>
         </span>
-      </button>
-      <div className="flex items-center gap-1">
-        <span className={`text-sm font-semibold tabular-nums ${tone}`}>
-          {tx.type === 'income' ? '+' : tx.type === 'expense' ? '-' : ''}
+        <span
+          className={`text-sm font-semibold tabular-nums ${
+            tx.type === 'income'
+              ? 'text-emerald-600 dark:text-emerald-400'
+              : tx.type === 'expense'
+                ? 'text-rose-600 dark:text-rose-400'
+                : 'text-sky-600 dark:text-sky-400'
+          }`}
+        >
+          {tx.type === 'income' ? '+' : tx.type === 'expense' ? '−' : ''}
           {money(tx.amount_minor, currency)}
         </span>
-        <button
-          type="button"
-          onClick={onDelete}
-          aria-label="Delete transaction"
-          className="flex h-9 w-9 items-center justify-center rounded-full text-slate-400 active:bg-rose-50 active:text-rose-600 dark:active:bg-rose-950"
-        >
-          ×
-        </button>
       </div>
     </div>
   );
