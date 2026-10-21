@@ -10,3 +10,6 @@ dist/
 
 # Local review artifacts
 /screenshots/
+
+# Local data backups (personal financial records stay out of git)
+/backups/
