@@ -5,11 +5,28 @@ expenses / income / transfers, category budgets, weekly & monthly reports, CSV e
 mode, and a PWA you can add to your phone's home screen. One password, no sign-ups, no
 recurring cost.
 
+## Screenshots
+
+| Home (light) | Home (dark) |
+| --- | --- |
+| ![Home: total balance hero, monthly summary and budgets, light mode](docs/screenshots/home-light.png) | ![Home: same screen in dark mode](docs/screenshots/home-dark.png) |
+
+| Transactions | Budgets |
+| --- | --- |
+| ![Transaction list with category icons and daily totals](docs/screenshots/list.png) | ![Budgets with remaining amount and daily pace per category](docs/screenshots/budgets.png) |
+
+| Reports | Settings |
+| --- | --- |
+| ![Weekly report with plain-language comparisons and spending chart](docs/screenshots/reports.png) | ![Settings: theme, exchange rate and accounts](docs/screenshots/settings.png) |
+
+Four tabs sit in the bottom bar — **Home, List, +, Reports, Budgets** — with the green **+**
+FAB dead-centre; **Settings** lives behind the gear icon in the top-right of every header.
+
 ## Tech stack — and why
 
 | Layer | Choice | Why |
 | --- | --- | --- |
-| Frontend | **React 19 + Vite + TypeScript + Tailwind CSS 4** | Fast dev/build (98 kB gzipped app), mobile-first with a bottom nav, no framework overhead for a pure SPA. |
+| Frontend | **React 19 + Vite + TypeScript + Tailwind CSS 4** | Fast dev/build (~105 kB gzipped app), mobile-first with a bottom nav, no framework overhead for a pure SPA. |
 | API | **Cloudflare Worker** (plain `fetch` handler) | Password check, rate limiting and session validation must never touch browser code, so everything runs server-side. |
 | Database | **Cloudflare D1 (SQLite)** | Free tier, real SQL (joins/date ranges for reports), no separate vendor to manage — API + DB + static assets live on one platform and one account. |
 | Auth | HttpOnly `SameSite=Strict` session cookie (30-day) + SHA-256 token hash in D1 | Password lives only in the `APP_PASSWORD` environment variable; every API request is checked server-side. Login attempts are rate limited (8 per 15 min per IP). |
@@ -30,8 +47,9 @@ API and the built SPA is the simplest thing that meets every requirement on the 
 │   ├── _headers               # security headers for static assets
 │   └── icons/                 # generated PNG icons (see scripts/gen-icons.mjs)
 ├── src/                       # frontend (TypeScript + React)
-│   ├── App.tsx                # routes + auth gate + bottom nav
-│   ├── components/            # ui primitives, charts (SVG donut/bars), bottom nav
+│   ├── App.tsx                # routes + auth gate
+│   ├── components/            # ui primitives, charts (SVG donut/bars), bottom nav,
+│   │                          # PageHeader (title + Settings gear)
 │   ├── lib/                   # api client, money/date helpers, CSV builders, hooks
 │   ├── pages/                 # Dashboard, AddTransaction, Transactions, Reports,
 │   │                          # Budgets, Settings, Login
@@ -39,14 +57,16 @@ API and the built SPA is the simplest thing that meets every requirement on the 
 ├── worker/                    # backend (Cloudflare Worker, bundled to build/worker.js)
 │   ├── index.ts               # router, auth gate, security headers, asset fallback
 │   ├── auth.ts                # login, rate limit, 30-day session cookies
-│   ├── api.ts                 # accounts, categories, transactions, budgets, settings
+│   ├── api.ts                 # accounts, categories, transactions, budgets, settings, backup/restore
 │   ├── reports.ts             # dashboard + weekly/monthly report queries
-│   ├── schema.ts              # D1 migrations + one-time seeds
+│   ├── schema.ts              # D1 migrations + one-time seeds (recorded in schema_migrations)
 │   └── util.ts, d1.d.ts       # helpers and binding types
 ├── scripts/
 │   ├── build.mjs              # icons → vite build → worker bundle → deploy manifest
 │   ├── gen-icons.mjs          # PNG icon generator (no image dependencies)
-│   └── smoke.mjs              # 129-assertion end-to-end API test
+│   ├── smoke.mjs              # 154-assertion end-to-end API test
+│   └── verify-live.mjs        # re-compute balances/reports against a deployed instance
+├── docs/screenshots/          # the images in this README
 ├── wrangler.jsonc             # local dev config (local D1 + assets)
 └── build/                     # deployable output: manifest.json, worker.js, public/
 ```
@@ -55,16 +75,20 @@ API and the built SPA is the simplest thing that meets every requirement on the 
 
 | Table | Purpose |
 | --- | --- |
-| `accounts` | Wallets: name, `MYR`/`USD`, opening balance, sort order, archived flag |
-| `categories` | Presets (Food, Transport, Bills, Shopping, Entertainment, Education, Other) — add/rename/delete; ones with history archive instead of deleting |
+| `accounts` | Wallets: name, `MYR`/`USD`, starting balance, sort order, archived flag |
+| `categories` | Presets with a **`kind`**: seven `expense` categories (Food, Transport, Bills, Shopping, Entertainment, Education, Other) plus five `income` ones (Allowance, Family, Salary, Gift, Other). Add/rename/delete in Settings; ones with history archive instead of deleting. Rows created before the `kind` column default to `expense`. |
 | `transactions` | `expense` \| `income` \| `transfer`; amounts stored as **integer cents**; transfers carry `account_id` → `to_account_id` and are excluded from every spending/income report |
 | `budgets` | One monthly amount per category |
-| `settings` | Key/value (currently the manual `usd_myr_rate`) |
+| `settings` | Key/value (the manual `usd_myr_rate` and when it last changed) |
 | `sessions` | SHA-256 hash of the session cookie + expiry |
 | `login_attempts` | Rate-limit counters per IP |
+| `schema_migrations` | Applied migration ids (`0001_initial`, `0002_category_kind`), each run exactly once |
 
 Money is stored as integers (sen/cents), so balances are exact. USD balances stay in USD and
 are converted at your manual rate for the combined total, budgets and reports.
+
+Migrations are **additive and idempotent** — they run inside the Worker on the first API
+request after a deploy, so schema changes ship with the code that needs them.
 
 ## Local development
 
@@ -84,7 +108,7 @@ BASE=https://your-site.example node scripts/verify-live.mjs
 ```
 
 The database schema applies itself on the first API request and seeds your four accounts and
-seven categories once.
+twelve categories once.
 
 ## Deployment (free)
 
@@ -105,6 +129,11 @@ The app deploys as **one Cloudflare Worker that serves the built SPA plus the AP
 7. When you're happy with the preview, publish **Production** (same steps; Preview and
    Production have separate databases — set the password and rate for each).
 
+Any migration in `worker/schema.ts` applies itself on the first API request after the new
+code is live, so there is no manual SQL step. Before shipping one, grab a safety copy:
+Settings → **Download full backup (JSON)**, or `GET /api/backup` with a session — it is a
+complete, restorable snapshot of every table.
+
 **Same thing with the Wrangler CLI instead** (any Cloudflare account, free tier):
 
 ```bash
@@ -119,18 +148,30 @@ is `APP_PASSWORD`.
 
 ## Using it
 
+- **Navigation** — Home, List, Reports and Budgets in the bottom bar with the green **+** FAB
+  centred between them; **Settings** is the gear in the header. Every target is at least
+  44×44pt and the bar respects the iPhone home-indicator inset.
 - **Add a transaction** — tap the green **+**: amount on the keypad → account → category →
-  Save (note/date optional, date defaults to today). Income and Transfer switch at the top;
-  transfers show a live cross-currency preview.
-- **Dashboard** — combined total in MYR, per-account balances, this week (Mon–Sun) and this
-  month, category donut, 13-week bar chart, budget bars, recent transactions.
-- **Reports** — Weekly (Mon–Sun) and Monthly, browse past periods with ‹ ›, comparison vs the
-  previous period, biggest expenses, budget performance, CSV export (report or all
-  transactions).
-- **Budgets** — monthly cap per category with progress bars; warns at 80% and turns red over
-  budget.
-- **Settings** — USD → MYR rate, accounts (rename, opening balance, currency), categories
-  (add/rename/archive), dark mode, CSV export, sign out.
+  note/date → Save (sticky above the keypad). Income draws from the income categories
+  (Allowance, Family, Salary, Gift, Other) and Expense from the spending ones; transfers pick
+  two accounts and show a live cross-currency preview. Save stays disabled until the amount
+  and category are set, and there are no preselected defaults.
+- **Dashboard** — hero card with the combined MYR total and a per-account scroller, this week
+  (Mon–Sun) and this month, budget progress, category donut (tap a slice to open those
+  transactions), 13-week bar chart, recent transactions with category icons and short dates.
+- **List** — searchable, grouped by day with daily totals for both spending *and* income;
+  swipe a row to delete (with Undo), tap it to edit, and filter by account, category, type or
+  date range with the Filters badge.
+- **Reports** — Weekly (Mon–Sun) and Monthly, browse past periods with ‹ › (disabled past the
+  current one), plain-language comparisons vs the previous period, spending-over-time chart,
+  every expense category with a share, biggest expenses, budget performance, CSV export.
+- **Budgets** — monthly cap per category with what's left and the daily pace to stay on track
+  ("RM 564.30 left · RM 24/day for 11 days"); bars turn amber at 70% and red past 100%. Tap a
+  budget to edit or remove it; add more from the icon chips.
+- **Settings** — System/Light/Dark theme, USD → MYR rate (decimal keypad, save enabled only
+  when it changes), accounts with editable starting balances plus rename/reorder/archive,
+  categories with `↑` marking the income-only ones, CSV export, JSON backup **and restore**,
+  sign out.
 - **Phone** — browser menu → *Add to Home Screen*; the app installs standalone and opens
   offline.
 
