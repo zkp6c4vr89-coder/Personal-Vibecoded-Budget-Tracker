@@ -1,14 +1,20 @@
 import { useEffect, type ReactNode } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Icon } from './icons';
 
 export function PageHeader({
   title,
   back,
   right,
+  showSettings = true,
 }: {
   title: string;
   back?: () => void;
   right?: ReactNode;
+  /** The header gear that opens Settings. Off on the Settings screen itself. */
+  showSettings?: boolean;
 }) {
+  const navigate = useNavigate();
   return (
     // Opaque + fixed height: the old translucent, blur-backed header ghosted
     // content underneath while scrolling.
@@ -25,6 +31,16 @@ export function PageHeader({
       )}
       <h1 className="flex-1 truncate text-lg font-semibold">{title}</h1>
       {right}
+      {showSettings && (
+        <button
+          type="button"
+          onClick={() => navigate('/settings')}
+          aria-label="Settings"
+          className="-mr-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-slate-700 active:bg-slate-200 dark:text-slate-200 dark:active:bg-slate-800"
+        >
+          <Icon name="sliders" size={22} />
+        </button>
+      )}
     </header>
   );
 }

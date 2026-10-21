@@ -236,7 +236,7 @@ export default function Settings() {
 
   return (
     <>
-      <PageHeader title="Settings" />
+      <PageHeader title="Settings" back={() => navigate(-1)} showSettings={false} />
 
       {pageError && <ErrorBanner message={pageError} onDismiss={() => setPageError(null)} />}
 
