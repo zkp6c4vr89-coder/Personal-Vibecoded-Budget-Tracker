@@ -42,23 +42,39 @@ export function useAsync<T>(fn: () => Promise<T>, deps: unknown[] = []): AsyncSt
   return { data, error, loading, reload };
 }
 
-export function useTheme(): ['light' | 'dark', () => void] {
-  const [theme, setTheme] = useState<'light' | 'dark'>(() =>
-    document.documentElement.classList.contains('dark') ? 'dark' : 'light',
-  );
-  const toggle = useCallback(() => {
-    setTheme((current) => {
-      const next = current === 'dark' ? 'light' : 'dark';
-      document.documentElement.classList.toggle('dark', next === 'dark');
-      try {
-        localStorage.setItem('theme', next);
-      } catch {
-        /* ignore */
-      }
-      return next;
-    });
+export type ThemeChoice = 'system' | 'light' | 'dark';
+
+/**
+ * Appearance choice: an explicit light/dark selection is stored, while
+ * "system" follows the OS (and clears the stored preference). The resolved
+ * theme is applied live and kept in sync by public/theme-init.js at boot.
+ */
+export function useTheme(): [ThemeChoice, (next: ThemeChoice) => void] {
+  const [theme, setThemeState] = useState<ThemeChoice>(() => {
+    try {
+      const stored = localStorage.getItem('theme');
+      if (stored === 'light' || stored === 'dark') return stored;
+    } catch {
+      /* ignore */
+    }
+    return 'system';
+  });
+
+  const apply = useCallback((next: ThemeChoice) => {
+    const dark =
+      next === 'dark' ||
+      (next === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.classList.toggle('dark', dark);
+    try {
+      if (next === 'system') localStorage.removeItem('theme');
+      else localStorage.setItem('theme', next);
+    } catch {
+      /* ignore */
+    }
+    setThemeState(next);
   }, []);
-  return [theme, toggle];
+
+  return [theme, apply];
 }
 
 /** Persisted value (last used account, etc.). */
